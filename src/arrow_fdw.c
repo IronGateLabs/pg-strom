@@ -1176,7 +1176,7 @@ assignArrowStatsBinary(RecordBatchState *rb_state,
 													field,
 													__min_token,
 													__max_token);
-						if (!rb_field->stat_datum.isnull)
+						if (p_stat_attrs && !rb_field->stat_datum.isnull)
 							*p_stat_attrs = bms_add_member(*p_stat_attrs, j);
 						break;
 					}
@@ -2456,7 +2456,7 @@ __buildRecordBatchStateOne(ArrowSchema *schema,
 		ArrowField	   *field = &schema->fields[j];
 
 		__buildRecordBatchFieldState(&con, rb_field, field, 0);
-		if (!rb_field->stat_datum.isnull)
+		if (p_stat_attrs && !rb_field->stat_datum.isnull)
 			*p_stat_attrs = bms_add_member(*p_stat_attrs, j);
 	}
 	if (con.buffer_curr != con.buffer_tail ||
@@ -2741,7 +2741,7 @@ __processVirtualColumn(Form_pg_attribute attr,
 	MemoryContext oldcxt = CurrentMemoryContext;
 	Oid		type_input;
 	Oid		type_ioparam;
-	Datum	datum;
+	Datum	datum = (Datum)0;
 
 	getTypeInputInfo(attr->atttypid,
 					 &type_input,

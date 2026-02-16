@@ -167,7 +167,11 @@ geometry_load_subitem(kern_context *kcxt,
 			gsub->nitems = __Fetch(((uint32_t *)geom->rawdata) + index);
 			gsub->rawdata = pos;
 			gsub->bbox   = geom->bbox;
-			setup_geometry_rawsize(gsub);
+			if (!setup_geometry_rawsize(gsub))
+			{
+				STROM_ELOG(kcxt, "unknown geometry subtype");
+				return false;
+			}
 			pos += gsub->rawsize;
 			if (pos > geom->rawdata + geom->rawsize)
 			{
@@ -202,7 +206,11 @@ geometry_load_subitem(kern_context *kcxt,
 			pos += sizeof(uint32_t);
 			gsub->rawdata = pos;
 			gsub->bbox = geom->bbox;
-			setup_geometry_rawsize(gsub);
+			if (!setup_geometry_rawsize(gsub))
+			{
+				STROM_ELOG(kcxt, "unknown geometry subtype");
+				return false;
+			}
 			pos += gsub->rawsize;
 			if (pos > geom->rawdata + geom->rawsize)
 			{
@@ -2913,7 +2921,7 @@ __geom_curvering_getfirstpoint2d(POINT2D *pt,
 	if (geom->type == GEOM_LINETYPE ||
 		geom->type == GEOM_CIRCSTRINGTYPE)
 	{
-		memcpy(pt, &geom->rawdata, sizeof(POINT2D));
+		memcpy(pt, geom->rawdata, sizeof(POINT2D));
 		return true;
 	}
 	else if (geom->type == GEOM_COMPOUNDTYPE)
@@ -4843,12 +4851,12 @@ geom_relate_line_triangle(kern_context *kcxt,
 		bool		p1_is_head = true;
 		POINT2D		P1, P2;
 
+		xpu_geometry_t __temp;
+
 		if (geom1->type == GEOM_LINETYPE)
             line = geom1;
 		else
 		{
-			xpu_geometry_t __temp;
-
 			if (!geometry_load_subitem(kcxt, &__temp, geom1, &gpos, k))
 				return -1;
 			line = &__temp;
@@ -5451,12 +5459,12 @@ geom_relate_line_polygon(kern_context *kcxt,
 		bool		p1_is_head = true;
 		POINT2D		P1, P2;
 
+		xpu_geometry_t __lineData;
+
 		if (geom1->type == GEOM_LINETYPE)
 			line = geom1;
 		else
 		{
-			xpu_geometry_t __lineData;
-
 			if (!geometry_load_subitem(kcxt, &__lineData, geom1, &gpos, k))
 				return -1;
 			line = &__lineData;

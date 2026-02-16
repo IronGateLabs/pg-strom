@@ -951,6 +951,7 @@ public:
 				__len = Min(sz, STATS_VALUE_LEN);
 				memcpy(stats_min_value, addr, __len);
 				stats_min_value[__len] = '\0';
+				stats_min_len = __len;
 			}
 			__len = Min(sz, stats_max_len);
 			rv = memcmp(addr, stats_max_value, __len);
@@ -959,6 +960,7 @@ public:
 				__len = Min(sz, STATS_VALUE_LEN);
 				memcpy(stats_max_value, addr, __len);
 				stats_max_value[__len] = '\0';
+				stats_max_len = __len;
 			}
 		}
 	}
