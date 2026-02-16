@@ -3992,6 +3992,29 @@ codegen_build_groupby_actions(codegen_context *context,
 }
 
 /*
+ * __lookupSortKeyResno - find the target list entry matching the expression
+ * and return its resno
+ */
+static AttrNumber
+__lookupSortKeyResno(codegen_context *context, Expr *expr)
+{
+	ListCell   *cell;
+
+	foreach (cell, context->tlist_dev)
+	{
+		TargetEntry *tle = lfirst(cell);
+
+		if (tle->resjunk)
+			continue;
+		if (equal(expr, tle->expr))
+			return tle->resno;
+	}
+	elog(ERROR, "Bug? GPU-SortKey (%s) is missing",
+		 nodeToString((Node *)expr));
+	return InvalidAttrNumber;	/* not reached */
+}
+
+/*
  * codegen_build_gpusort_keydesc
  */
 bytea *
@@ -4033,25 +4056,7 @@ codegen_build_gpusort_keydesc(codegen_context *context,
 		keydesc->order_asc   = ((ival & KSORT_KEY_ATTR__ORDER_ASC)  != 0);
 		if (kind == KSORT_KEY_KIND__VREF)
 		{
-			ListCell   *cell;
-			bool		found = false;
-
-			foreach (cell, context->tlist_dev)
-			{
-				TargetEntry *tle = lfirst(cell);
-
-				if (tle->resjunk)
-					continue;
-				if (equal(expr, tle->expr))
-				{
-					keydesc->src_anum = tle->resno;
-					found = true;
-					break;
-				}
-			}
-			if (!found)
-				elog(ERROR, "Bug? GPU-SortKey (%s) is missing",
-					 nodeToString((Node *)expr));
+			keydesc->src_anum = __lookupSortKeyResno(context, expr);
 			keydesc->buf_offset = 0;
 			dtype = pgstrom_devtype_lookup(exprType((Node *)expr));
 			if (!dtype)
@@ -4071,25 +4076,9 @@ codegen_build_gpusort_keydesc(codegen_context *context,
 				keydesc->src_anum = 0;
 			else
 			{
-				ListCell   *cell;
 				Expr	   *farg = linitial(func->args);
-				bool		found = false;
 
-				foreach (cell, context->tlist_dev)
-				{
-					TargetEntry *tle = lfirst(cell);
-
-					if (tle->resjunk)
-						continue;
-					if (equal(farg, tle->expr))
-					{
-						keydesc->src_anum = tle->resno;
-						found = true;
-						break;
-					}
-				}
-				if (!found)
-					elog(ERROR, "Bug? GPU-SortKey (%s) is missing", nodeToString(expr));
+				keydesc->src_anum = __lookupSortKeyResno(context, (Expr *)farg);
 			}
 			switch (kind)
 			{
