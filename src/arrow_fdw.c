@@ -2793,6 +2793,53 @@ __fetchVirtualSourceSpecial(ArrowFileState *af_state, const char *key)
 	return NULL;
 }
 
+/*
+ * __lookupCachedFieldMetadata - search custom-metadata in field cache
+ */
+static const char *
+__lookupCachedFieldMetadata(arrowMetadataCacheBlock *mc_block,
+							const char *field_name,
+							const char *meta_key)
+{
+	dlist_iter	iter;
+
+	dlist_foreach (iter, &mc_block->mcache_head.fields)
+	{
+		arrowMetadataFieldCache *fcache = dlist_container(arrowMetadataFieldCache,
+														  chain, iter.cur);
+		if (strcmp(fcache->attname, field_name) == 0)
+		{
+			arrowMetadataKeyValueCache *mc_kv = fcache->custom_metadata;
+
+			while (mc_kv)
+			{
+				if (strcmp(mc_kv->key, meta_key) == 0)
+					return mc_kv->value;
+				mc_kv = mc_kv->next;
+			}
+		}
+	}
+	return NULL;
+}
+
+/*
+ * __lookupCachedSchemaMetadata - search custom-metadata in schema cache
+ */
+static const char *
+__lookupCachedSchemaMetadata(arrowMetadataCacheBlock *mc_block,
+							 const char *meta_key)
+{
+	arrowMetadataKeyValueCache *mc_kv = mc_block->custom_metadata;
+
+	while (mc_kv)
+	{
+		if (strcmp(mc_kv->key, meta_key) == 0)
+			return mc_kv->value;
+		mc_kv = mc_kv->next;
+	}
+	return NULL;
+}
+
 static List *
 __fetchVirtualSourceByCache(ArrowFileState *af_state,
 							arrowMetadataCacheBlock *mc_block,
@@ -2836,50 +2883,56 @@ __fetchVirtualSourceByCache(ArrowFileState *af_state,
 			if (pos)
 				*pos++ = '\0';
 			if (!pos)
-			{
-				/* fetch custom-metadata from Schema */
-				arrowMetadataKeyValueCache *mc_kv = mc_block->custom_metadata;
-
-				while (mc_kv)
-				{
-					if (strcmp(mc_kv->key, key) == 0)
-					{
-						value = mc_kv->value;
-						goto found;
-					}
-					mc_kv = mc_kv->next;
-				}
-			}
+				value = __lookupCachedSchemaMetadata(mc_block, key);
 			else
-			{
-				/* fetch custom-metadata from Fields */
-				dlist_iter	iter;
-
-				dlist_foreach (iter, &mc_block->mcache_head.fields)
-				{
-					arrowMetadataFieldCache *fcache = dlist_container(arrowMetadataFieldCache,
-																	  chain, iter.cur);
-					if (strcmp(fcache->attname, key) == 0)
-					{
-						arrowMetadataKeyValueCache *mc_kv = fcache->custom_metadata;
-
-						while (mc_kv)
-						{
-							if (strcmp(mc_kv->key, pos) == 0)
-							{
-								value = mc_kv->value;
-								goto found;
-							}
-							mc_kv = mc_kv->next;
-						}
-					}
-				}
-			}
+				value = __lookupCachedFieldMetadata(mc_block, key, pos);
 		}
 	found:
 		results = lappend(results, value ? pstrdup(value) : NULL);
 	}
 	return results;
+}
+
+/*
+ * __lookupArrowFieldMetadata - search custom-metadata in ArrowSchema fields
+ */
+static const char *
+__lookupArrowFieldMetadata(ArrowSchema *schema,
+						   const char *field_name,
+						   const char *meta_key)
+{
+	for (int i=0; i < schema->_num_fields; i++)
+	{
+		ArrowField *field = &schema->fields[i];
+
+		if (strcmp(field->name, field_name) == 0)
+		{
+			for (int k=0; k < field->_num_custom_metadata; k++)
+			{
+				ArrowKeyValue  *kv = &field->custom_metadata[k];
+
+				if (strcmp(kv->key, meta_key) == 0)
+					return kv->value;
+			}
+		}
+	}
+	return NULL;
+}
+
+/*
+ * __lookupArrowSchemaMetadata - search custom-metadata in ArrowSchema
+ */
+static const char *
+__lookupArrowSchemaMetadata(ArrowSchema *schema, const char *meta_key)
+{
+	for (int i=0; i < schema->_num_custom_metadata; i++)
+	{
+		ArrowKeyValue  *kv = &schema->custom_metadata[i];
+
+		if (strcmp(kv->key, meta_key) == 0)
+			return kv->value;
+	}
+	return NULL;
 }
 
 static List *
@@ -2925,43 +2978,10 @@ __fetchVirtualSourceByFile(ArrowFileState *af_state,
 			pos = strchr(key, '.');
 			if (pos)
 				*pos++ = '\0';
-
 			if (!pos)
-			{
-				/* fetch custom-metadata from Schema */
-				for (int i=0; i < schema->_num_custom_metadata; i++)
-				{
-					ArrowKeyValue  *kv = &schema->custom_metadata[i];
-
-					if (strcmp(kv->key, key) == 0)
-					{
-						value = kv->value;
-						goto found;
-					}
-				}
-			}
+				value = __lookupArrowSchemaMetadata(schema, key);
 			else
-			{
-				/* fetch custom-metadata from Fields */
-				for (int i=0; i < schema->_num_fields; i++)
-				{
-					ArrowField *field = &schema->fields[i];
-
-					if (strcmp(field->name, key) == 0)
-					{
-						for (int k=0; k < field->_num_custom_metadata; k++)
-						{
-							ArrowKeyValue  *kv = &field->custom_metadata[k];
-
-							if (strcmp(kv->key, pos) == 0)
-							{
-								value = kv->value;
-								goto found;
-							}
-						}
-					}
-				}
-			}
+				value = __lookupArrowFieldMetadata(schema, key, pos);
 		}
 	found:
 		results = lappend(results, value ? pstrdup(value) : NULL);
@@ -5933,6 +5953,44 @@ ensureUniqueFieldNames(ArrowSchema *schema, List *virtual_columns)
 }
 
 /*
+ * __checkArrowSchemaCompatibility - verify schema from additional file
+ * matches the reference schema
+ */
+static void
+__checkArrowSchemaCompatibility(ArrowSchema *schema,
+								ArrowSchema *stemp,
+								const char *fname)
+{
+	if (schema->endianness != stemp->endianness ||
+		schema->_num_fields != stemp->_num_fields)
+		elog(ERROR, "file '%s' has incompatible schema definition", fname);
+
+	for (int j=0; j < schema->_num_fields; j++)
+	{
+		bool	found = false;
+
+		for (int k=0; k < stemp->_num_fields; k++)
+		{
+			if (strcmp(schema->fields[j].name,
+					   stemp->fields[k].name) == 0)
+			{
+				if (equalArrowNode(&schema->fields[j].type.node,
+								   &stemp->fields[k].type.node))
+				{
+					found = true;
+					break;
+				}
+				elog(ERROR, "field '%s' of '%s' has incompatible data type",
+					 schema->fields[j].name, fname);
+			}
+		}
+		if (!found)
+			elog(ERROR, "field '%s' was not found in the file '%s'",
+				 schema->fields[j].name, fname);
+	}
+}
+
+/*
  * ArrowImportForeignSchema
  */
 static List *
@@ -5985,35 +6043,9 @@ ArrowImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 		}
 		else
 		{
-			/* compatibility checks */
-			ArrowSchema	   *stemp = &af_info.footer.schema;
-
-			if (schema.endianness != stemp->endianness ||
-				schema._num_fields != stemp->_num_fields)
-				elog(ERROR, "file '%s' has incompatible schema definition", fname);
-			for (int j=0; j < schema._num_fields; j++)
-			{
-				bool	found = false;
-
-				for (int k=0; k < stemp->_num_fields; k++)
-				{
-					if (strcmp(schema.fields[j].name,
-							   stemp->fields[k].name) == 0)
-					{
-						if (equalArrowNode(&schema.fields[j].type.node,
-										   &stemp->fields[k].type.node))
-						{
-							found = true;
-							break;
-						}
-						elog(ERROR, "field '%s' of '%s' has incompatible data type",
-							 schema.fields[j].name, fname);
-					}
-				}
-				if (!found)
-					elog(ERROR, "field '%s' was not found in the file '%s'",
-						 schema.fields[j].name, fname);
-			}
+			__checkArrowSchemaCompatibility(&schema,
+											&af_info.footer.schema,
+											fname);
 		}
 	}
 	/* ensure the field-names are unique */

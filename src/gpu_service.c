@@ -4605,6 +4605,55 @@ bailout:
 	return retval;
 }
 
+/*
+ * __mergePartitionedOuterJoinMap - merge outer-join-map for partitioned
+ * inner buffer to the responsible GPU device
+ */
+static bool
+__mergePartitionedOuterJoinMap(gpuClient *gclient,
+							   kern_multirels *d_kmrels,
+							   kern_buffer_partitions *kbuf_parts,
+							   gpuContext **gcontext_parts,
+							   int depth)
+{
+	uint32_t	hash_divisor = kbuf_parts->hash_divisor;
+
+	for (int dindex=0; dindex < numGpuDevAttrs; dindex++)
+	{
+		gpuContext *gcontext_curr = &gpuserv_gpucontext_array[dindex];
+		gpumask_t	cuda_dmask = (1UL<<dindex);
+		bool		ojmap_merged = false;
+
+		for (int k=0; k < hash_divisor; k++)
+		{
+			if ((kbuf_parts->parts[k].available_gpus & cuda_dmask) != 0)
+			{
+				if (gcontext_parts[k])
+				{
+					if (!__execMergeRightOuterJoinMap(gclient,
+													  gcontext_parts[k],
+													  gcontext_curr,
+													  d_kmrels,
+													  depth))
+						return false;
+				}
+				else
+				{
+					gcontext_parts[k] = gcontext_curr;
+				}
+				ojmap_merged = true;
+			}
+		}
+		if (!ojmap_merged)
+		{
+			gpuClientELog(gclient, "Unable to merge OUTER-JOIN-MAP at GPU-%d",
+						  dindex);
+			return false;
+		}
+	}
+	return true;
+}
+
 static bool
 gpuservHandleRightOuterJoin(gpuClient *gclient,
 							gpuContext *gcontext,
@@ -4686,44 +4735,12 @@ gpuservHandleRightOuterJoin(gpuClient *gclient,
 
 			gcontext_parts = alloca(sizeof(gpuContext *) * hash_divisor);
 			memset(gcontext_parts, 0, sizeof(gpuContext *) * hash_divisor);
-			/*
-			 * merge the outer-join-map to the device that is responsible
-			 * to the partition. (If exact 1-partition 1-GPU mapping, it
-			 * does not run outer-join-map merging.
-			 */
-			for (int dindex=0; dindex < numGpuDevAttrs; dindex++)
-			{
-				gpuContext *gcontext_curr = &gpuserv_gpucontext_array[dindex];
-				gpumask_t	cuda_dmask = (1UL<<dindex);
-				bool		ojmap_merged = false;
-
-				for (int k=0; k < hash_divisor; k++)
-				{
-					if ((kbuf_parts->parts[k].available_gpus & cuda_dmask) != 0)
-					{
-						if (gcontext_parts[k])
-						{
-							if (!__execMergeRightOuterJoinMap(gclient,
-															  gcontext_parts[k],
-															  gcontext_curr,
-															  d_kmrels,
-															  depth))
-								goto bailout;
-						}
-						else
-						{
-							gcontext_parts[k] = gcontext_curr;
-						}
-						ojmap_merged = true;
-					}
-				}
-				if (!ojmap_merged)
-				{
-					gpuClientELog(gclient, "Unable to merge OUTER-JOIN-MAP at GPU-%d",
-								  dindex);
-					goto bailout;
-				}
-			}
+			if (!__mergePartitionedOuterJoinMap(gclient,
+											   d_kmrels,
+											   kbuf_parts,
+											   gcontext_parts,
+											   depth))
+				goto bailout;
 			/*
 			 * Runs the right-outer-join for each pinned-inner-buffer
 			 * partitions on the responsible device.
@@ -5888,6 +5905,36 @@ __gpuservHandleGpuScanJoinFinal(gpuClient *gclient,
 	return true;
 }
 
+/*
+ * __mergeOuterJoinMapToHost - merge GPU outer-join-map back to host buffer
+ */
+static void
+__mergeOuterJoinMapToHost(gpuClient *gclient,
+						  kern_multirels *h_kmrels,
+						  kern_multirels *d_kmrels)
+{
+	for (int dindex=0; dindex < numGpuDevAttrs; dindex++)
+	{
+		if ((gclient->optimal_gpus & (1UL<<dindex)) == 0)
+			continue;
+		for (int depth=1; depth <= d_kmrels->num_rels; depth++)
+		{
+			kern_data_store *kds = KERN_MULTIRELS_INNER_KDS(h_kmrels, depth);
+			bool   *d_ojmap;
+			bool   *h_ojmap;
+
+			d_ojmap = KERN_MULTIRELS_GPU_OUTER_JOIN_MAP(d_kmrels, depth, dindex);
+			h_ojmap = KERN_MULTIRELS_OUTER_JOIN_MAP(h_kmrels, depth);
+			if (d_ojmap && h_ojmap)
+			{
+				for (uint32_t j=0; j < kds->nitems; j++)
+					h_ojmap[j] |= d_ojmap[j];
+			}
+		}
+		pg_memory_barrier();
+	}
+}
+
 static void
 gpuservHandleGpuTaskFinal(gpuContext *gcontext,
 						  gpuClient *gclient,
@@ -5931,26 +5978,7 @@ gpuservHandleGpuTaskFinal(gpuContext *gcontext,
 		/* Merge RIGHT-OUTER-JOIN Map to the shared host buffer */
 		if (h_kmrels && d_kmrels)
 		{
-			for (int dindex=0; dindex < numGpuDevAttrs; dindex++)
-			{
-				if ((gclient->optimal_gpus & (1UL<<dindex)) == 0)
-					continue;
-				for (int depth=1; depth <= d_kmrels->num_rels; depth++)
-				{
-					kern_data_store *kds = KERN_MULTIRELS_INNER_KDS(h_kmrels, depth);
-					bool   *d_ojmap;
-					bool   *h_ojmap;
-
-					d_ojmap = KERN_MULTIRELS_GPU_OUTER_JOIN_MAP(d_kmrels, depth, dindex);
-					h_ojmap = KERN_MULTIRELS_OUTER_JOIN_MAP(h_kmrels, depth);
-					if (d_ojmap && h_ojmap)
-					{
-						for (uint32_t j=0; j < kds->nitems; j++)
-							h_ojmap[j] |= d_ojmap[j];
-					}
-				}
-				pg_memory_barrier();
-			}
+			__mergeOuterJoinMapToHost(gclient, h_kmrels, d_kmrels);
 			/* kick CPU fallback for RIGHT-OUTER-JOIN */
 			resp->u.results.right_outer_join = true;
 		}
