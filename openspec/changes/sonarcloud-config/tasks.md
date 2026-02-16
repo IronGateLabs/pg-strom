@@ -4,17 +4,16 @@
 - [x] 1.2 Configure `sonar.sources` to include `src/,arrow-tools/`
 - [x] 1.3 Add `sonar.exclusions` for `deadcode/**`, `docs/**`, `src/flatbuffers/**`, `test/**`, `fluentd/**`, `man/**`
 - [x] 1.4 Map `.cu` files to C++ analysis via `sonar.c.file.suffixes` and `sonar.cpp.file.suffixes`
-- [x] 1.5 Configure `sonar.coverage.report.path` placeholder for future coverage integration (e.g., `coverage.xml`)
+- [x] 1.5 Configure `sonar.coverage.report.path` placeholder (commented out until coverage is set up)
 
-## 2. GitHub Actions Workflow
+## 2. Analysis Mode
 
-- [x] 2.1 Create `.github/workflows/sonarcloud.yml` with trigger on push to `master` and pull requests
-- [x] 2.2 Add checkout step with `fetch-depth: 0` (required for SonarCloud blame data)
-- [x] 2.3 Add `SonarSource/sonarcloud-github-action` step using `SONAR_TOKEN` secret
-- [x] 2.4 Set `GITHUB_TOKEN` for PR decoration
+- [x] 2.1 Use SonarCloud Automatic Analysis (CFamily plugin requires compilation database not feasible in CI without CUDA/PG/Arrow build deps)
+- [x] 2.2 Remove CI workflow in favor of automatic analysis
+- [x] 2.3 Re-enable automatic analysis via SonarCloud API
 
 ## 3. Verification
 
-- [ ] 3.1 Push branch and verify GitHub Actions workflow triggers successfully
-- [ ] 3.2 Confirm SonarCloud dashboard shows reduced issue counts (deadcode/docs/flatbuffers excluded)
+- [x] 3.1 Push branch and create PR #1 targeting develop
+- [ ] 3.2 Confirm SonarCloud dashboard shows reduced issue counts after automatic analysis picks up exclusions
 - [ ] 3.3 Verify `.cu` files appear in SonarCloud analysis results under C++ language
