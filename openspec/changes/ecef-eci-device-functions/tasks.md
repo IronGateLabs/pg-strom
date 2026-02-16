@@ -24,8 +24,8 @@
 
 ## Phase 4: Tests
 
-- [ ] Add ECI round-trip regression test to `test/sql/postgis.sql` — ECEF→ECI→ECEF on GPU, verify distance < 1e-10 vs CPU
-- [ ] Add coordinate accessor test to `test/sql/postgis.sql` — GPU ST_ECEF_X/Y/Z vs CPU ST_X/ST_Y/ST_Z
-- [ ] Add 3D distance test to `test/sql/postgis.sql` — GPU ST_3DDistance vs CPU for known ECEF point pairs
-- [ ] Add 3D proximity test to `test/sql/postgis.sql` — GPU ST_3DDWithin filter vs CPU, verify identical result sets
-- [ ] Generate expected output files for PG 16/17/18 in `test/{16,17,18}/expected/postgis.out`
+- [x] Add ECI round-trip regression test to `test/sql/postgis.sql` — ECEF→ECI→ECEF on GPU, verify distance < 1e-10 vs CPU
+- [x] Add coordinate accessor test to `test/sql/postgis.sql` — GPU ST_ECEF_X/Y/Z vs CPU ST_X/ST_Y/ST_Z
+- [x] Add 3D distance test to `test/sql/postgis.sql` — GPU ST_3DDistance vs CPU for known ECEF point pairs
+- [x] Add 3D proximity test to `test/sql/postgis.sql` — GPU ST_3DDWithin filter vs CPU, verify identical result sets
+- [x] Generate expected output files for PG 16/17/18 in `test/{16,17,18}/expected/postgis.out`
