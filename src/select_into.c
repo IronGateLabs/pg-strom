@@ -250,7 +250,8 @@ __select_into_form__favg_fp(gpuClient *gclient,
 		= (kagg_state__psum_fp_packed *)source;
 	if (state->nitems == 0)
 		return 0;
-	*((float8_t *)dest) = (double)state->sum / (double)state->nitems;
+	if (dest)
+		*((float8_t *)dest) = (double)state->sum / (double)state->nitems;
 	return sizeof(float8_t);
 }
 

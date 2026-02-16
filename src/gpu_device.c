@@ -128,8 +128,8 @@ __collectGpuDevAttrs(GpuDevAttributes *dattrs, CUdevice cuda_device)
 	rc = cuDeviceGetUuid(&uuid, cuda_device);
 	if (rc != CUDA_SUCCESS)
 		__FATAL("failed on cuDeviceGetUuid: %s", cuStrError(rc));
-	sprintf(dattrs->DEV_UUID,
-			"GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+	snprintf(dattrs->DEV_UUID, sizeof(dattrs->DEV_UUID),
+			 "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 			(unsigned char)uuid.bytes[0],
 			(unsigned char)uuid.bytes[1],
 			(unsigned char)uuid.bytes[2],

@@ -174,7 +174,7 @@ typedef struct GpuDevAttributes
 	int32		NUMA_NODE_ID;
 	int32		DEV_ID;
 	char		DEV_NAME[256];
-	char		DEV_UUID[2 * sizeof(CUuuid) + 8];	/* human readable */
+	char		DEV_UUID[2 * sizeof(CUuuid) + 9];	/* human readable */
 	size_t		DEV_TOTAL_MEMSZ;
 	size_t		DEV_BAR1_MEMSZ;
 	bool		DEV_SUPPORT_GPUDIRECTSQL;
