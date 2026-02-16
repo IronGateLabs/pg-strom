@@ -6366,3 +6366,486 @@ pgfn_st_crosses(XPU_PGFUNCTION_ARGS)
 	}
 	return true;
 }
+
+/* ================================================================
+ *
+ * ECEF/ECI Frame Conversion and 3D Spatial Operations
+ *
+ * ================================================================ */
+
+/*
+ * eci_earth_rotation_angle
+ *
+ * Computes Earth Rotation Angle (ERA) from PostgreSQL timestamptz.
+ *
+ * PostgreSQL timestamptz is int64 microseconds since 2000-01-01 00:00:00 UTC.
+ * The PG epoch (POSTGRES_EPOCH_JDATE = 2451545) corresponds to J2000.0,
+ * so Du = JD_UT1 - 2451545.0 = tstz_usec / USECS_PER_DAY.
+ *
+ * ERA = 2*pi * (0.7790572732640 + 1.00273781191135448 * Du)
+ * per IERS Conventions (2003), Capitaine et al.
+ */
+STATIC_FUNCTION(double)
+eci_earth_rotation_angle(int64_t tstz_usec)
+{
+	double	Du = (double)tstz_usec / (86400.0 * 1000000.0);
+	double	theta = 2.0 * M_PI * (0.7790572732640 + 1.00273781191135448 * Du);
+
+	/* Normalize to [0, 2*pi) */
+	theta = fmod(theta, 2.0 * M_PI);
+	if (theta < 0.0)
+		theta += 2.0 * M_PI;
+	return theta;
+}
+
+/*
+ * eci_frame_to_srid
+ *
+ * Resolves ECI frame name text to the corresponding synthetic SRID.
+ * Supports 'ICRF', 'J2000', and 'TEME' with case-insensitive ASCII comparison.
+ * Returns 0 on invalid/unrecognized frame.
+ */
+STATIC_FUNCTION(int32_t)
+eci_frame_to_srid(const xpu_text_t *frame)
+{
+	const char *s = frame->value;
+	int			len = frame->length;
+
+	if (len == 4)
+	{
+		/* Check for "ICRF" (case-insensitive) */
+		if ((__UPPER(s[0]) == 'I') &&
+			(__UPPER(s[1]) == 'C') &&
+			(__UPPER(s[2]) == 'R') &&
+			(__UPPER(s[3]) == 'F'))
+			return ECI_SRID_ICRF;
+		/* Check for "TEME" (case-insensitive) */
+		if ((__UPPER(s[0]) == 'T') &&
+			(__UPPER(s[1]) == 'E') &&
+			(__UPPER(s[2]) == 'M') &&
+			(__UPPER(s[3]) == 'E'))
+			return ECI_SRID_TEME;
+	}
+	else if (len == 5)
+	{
+		/* Check for "J2000" (case-insensitive for the J) */
+		if ((__UPPER(s[0]) == 'J') &&
+			(s[1] == '2') &&
+			(s[2] == '0') &&
+			(s[3] == '0') &&
+			(s[4] == '0'))
+			return ECI_SRID_J2000;
+	}
+	return 0;
+}
+
+/* ----------------------------------------------------------------
+ * ST_ECEF_To_ECI(geometry, timestamptz, text)
+ *
+ * Converts an ECEF point (SRID 4978) to an ECI reference frame
+ * by applying the rotation Rz(+ERA) around the Z axis.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_ecef_to_eci(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS3(geometry, geometry, geom,
+					   timestamptz, epoch, text, frame);
+
+	if (XPU_DATUM_ISNULL(&geom) ||
+		XPU_DATUM_ISNULL(&epoch) ||
+		XPU_DATUM_ISNULL(&frame))
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+	if (!xpu_geometry_is_valid(kcxt, &geom))
+		return false;
+	if (!xpu_text_is_valid(kcxt, &frame))
+		return false;
+
+	/* Input must be a 3D POINT with SRID 4978 (ECEF) */
+	if (geom.type != GEOM_POINTTYPE)
+	{
+		STROM_ELOG(kcxt, "ST_ECEF_To_ECI: input must be POINT geometry");
+		return false;
+	}
+	if (!(geom.flags & GEOM_FLAG__Z))
+	{
+		STROM_ELOG(kcxt, "ST_ECEF_To_ECI: input must have Z coordinate");
+		return false;
+	}
+	if (geom.srid != ECEF_SRID)
+	{
+		STROM_ELOG(kcxt, "ST_ECEF_To_ECI: input SRID must be 4978 (ECEF)");
+		return false;
+	}
+
+	/* Resolve frame text to target SRID */
+	int32_t		target_srid = eci_frame_to_srid(&frame);
+	if (target_srid == 0)
+	{
+		STROM_ELOG(kcxt, "ST_ECEF_To_ECI: frame must be ICRF, J2000, or TEME");
+		return false;
+	}
+
+	/* Compute Earth Rotation Angle */
+	double		theta = eci_earth_rotation_angle(epoch.value);
+	double		cos_t = cos(theta);
+	double		sin_t = sin(theta);
+
+	/* Read input coordinates (unaligned access via memcpy) */
+	double		x, y, z;
+	memcpy(&x, geom.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&y, geom.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&z, geom.rawdata + 2 * sizeof(double), sizeof(double));
+
+	/* Allocate output coordinate buffer */
+	double	   *out = (double *)kcxt_alloc(kcxt, 3 * sizeof(double));
+	if (!out)
+	{
+		STROM_ELOG(kcxt, "out of memory");
+		return false;
+	}
+
+	/* Apply Rz(+theta): ECEF -> ECI rotation */
+	out[0] =  x * cos_t + y * sin_t;
+	out[1] = -x * sin_t + y * cos_t;
+	out[2] =  z;
+
+	/* Build result geometry */
+	result->expr_ops = &xpu_geometry_ops;
+	result->type     = GEOM_POINTTYPE;
+	result->flags    = GEOM_FLAG__Z;
+	result->srid     = target_srid;
+	result->nitems   = 1;
+	result->rawsize  = 3 * sizeof(double);
+	result->rawdata  = (char *)out;
+	result->bbox     = NULL;
+
+	return true;
+}
+
+/* ----------------------------------------------------------------
+ * ST_ECI_To_ECEF(geometry, timestamptz, text)
+ *
+ * Converts an ECI point to ECEF (SRID 4978) by applying
+ * the rotation Rz(-ERA) around the Z axis.
+ * Cross-validates the input geometry SRID against the frame text.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_eci_to_ecef(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS3(geometry, geometry, geom,
+					   timestamptz, epoch, text, frame);
+
+	if (XPU_DATUM_ISNULL(&geom) ||
+		XPU_DATUM_ISNULL(&epoch) ||
+		XPU_DATUM_ISNULL(&frame))
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+	if (!xpu_geometry_is_valid(kcxt, &geom))
+		return false;
+	if (!xpu_text_is_valid(kcxt, &frame))
+		return false;
+
+	/* Input must be a 3D POINT */
+	if (geom.type != GEOM_POINTTYPE)
+	{
+		STROM_ELOG(kcxt, "ST_ECI_To_ECEF: input must be POINT geometry");
+		return false;
+	}
+	if (!(geom.flags & GEOM_FLAG__Z))
+	{
+		STROM_ELOG(kcxt, "ST_ECI_To_ECEF: input must have Z coordinate");
+		return false;
+	}
+
+	/* Resolve frame text to expected SRID */
+	int32_t		expected_srid = eci_frame_to_srid(&frame);
+	if (expected_srid == 0)
+	{
+		STROM_ELOG(kcxt, "ST_ECI_To_ECEF: frame must be ICRF, J2000, or TEME");
+		return false;
+	}
+
+	/* Validate input SRID is a known ECI SRID */
+	if (geom.srid != ECI_SRID_ICRF &&
+		geom.srid != ECI_SRID_J2000 &&
+		geom.srid != ECI_SRID_TEME)
+	{
+		STROM_ELOG(kcxt, "ST_ECI_To_ECEF: input SRID must be an ECI frame (900001/900002/900003)");
+		return false;
+	}
+
+	/* Cross-validate: input SRID must match the specified frame */
+	if (geom.srid != expected_srid)
+	{
+		STROM_ELOG(kcxt, "ST_ECI_To_ECEF: geometry SRID does not match specified frame");
+		return false;
+	}
+
+	/* Compute Earth Rotation Angle */
+	double		theta = eci_earth_rotation_angle(epoch.value);
+	double		cos_t = cos(theta);
+	double		sin_t = sin(theta);
+
+	/* Read input coordinates (unaligned access via memcpy) */
+	double		x, y, z;
+	memcpy(&x, geom.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&y, geom.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&z, geom.rawdata + 2 * sizeof(double), sizeof(double));
+
+	/* Allocate output coordinate buffer */
+	double	   *out = (double *)kcxt_alloc(kcxt, 3 * sizeof(double));
+	if (!out)
+	{
+		STROM_ELOG(kcxt, "out of memory");
+		return false;
+	}
+
+	/* Apply Rz(-theta): ECI -> ECEF rotation (transpose of forward) */
+	out[0] = x * cos_t - y * sin_t;
+	out[1] = x * sin_t + y * cos_t;
+	out[2] = z;
+
+	/* Build result geometry */
+	result->expr_ops = &xpu_geometry_ops;
+	result->type     = GEOM_POINTTYPE;
+	result->flags    = GEOM_FLAG__Z;
+	result->srid     = ECEF_SRID;
+	result->nitems   = 1;
+	result->rawsize  = 3 * sizeof(double);
+	result->rawdata  = (char *)out;
+	result->bbox     = NULL;
+
+	return true;
+}
+
+/* ================================================================
+ *
+ * ECEF Coordinate Accessors
+ *
+ * ================================================================ */
+
+/* ----------------------------------------------------------------
+ * ST_ECEF_X(geometry) -> float8
+ *
+ * Extracts the X coordinate from a POINT geometry's rawdata.
+ * Returns NULL for non-POINT or empty geometries.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_ecef_x(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS1(float8, geometry, geom);
+
+	if (XPU_DATUM_ISNULL(&geom))
+	{
+		result->expr_ops = NULL;
+	}
+	else if (!xpu_geometry_is_valid(kcxt, &geom))
+	{
+		return false;
+	}
+	else if (geom.type != GEOM_POINTTYPE || geom.nitems == 0)
+	{
+		result->expr_ops = NULL;
+	}
+	else
+	{
+		memcpy(&result->value, geom.rawdata, sizeof(double));
+		result->expr_ops = &xpu_float8_ops;
+	}
+	return true;
+}
+
+/* ----------------------------------------------------------------
+ * ST_ECEF_Y(geometry) -> float8
+ *
+ * Extracts the Y coordinate from a POINT geometry's rawdata.
+ * Returns NULL for non-POINT or empty geometries.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_ecef_y(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS1(float8, geometry, geom);
+
+	if (XPU_DATUM_ISNULL(&geom))
+	{
+		result->expr_ops = NULL;
+	}
+	else if (!xpu_geometry_is_valid(kcxt, &geom))
+	{
+		return false;
+	}
+	else if (geom.type != GEOM_POINTTYPE || geom.nitems == 0)
+	{
+		result->expr_ops = NULL;
+	}
+	else
+	{
+		memcpy(&result->value,
+			   geom.rawdata + sizeof(double),
+			   sizeof(double));
+		result->expr_ops = &xpu_float8_ops;
+	}
+	return true;
+}
+
+/* ----------------------------------------------------------------
+ * ST_ECEF_Z(geometry) -> float8
+ *
+ * Extracts the Z coordinate from a POINT geometry's rawdata.
+ * Returns NULL if geometry is not a POINT, is empty, or lacks Z.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_ecef_z(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS1(float8, geometry, geom);
+
+	if (XPU_DATUM_ISNULL(&geom))
+	{
+		result->expr_ops = NULL;
+	}
+	else if (!xpu_geometry_is_valid(kcxt, &geom))
+	{
+		return false;
+	}
+	else if (geom.type != GEOM_POINTTYPE || geom.nitems == 0)
+	{
+		result->expr_ops = NULL;
+	}
+	else if (!(geom.flags & GEOM_FLAG__Z))
+	{
+		/* No Z dimension - return NULL */
+		result->expr_ops = NULL;
+	}
+	else
+	{
+		memcpy(&result->value,
+			   geom.rawdata + 2 * sizeof(double),
+			   sizeof(double));
+		result->expr_ops = &xpu_float8_ops;
+	}
+	return true;
+}
+
+/* ================================================================
+ *
+ * 3D Spatial Operations (Point-to-Point only)
+ *
+ * ================================================================ */
+
+/* ----------------------------------------------------------------
+ * ST_3DDistance(geometry, geometry) -> float8
+ *
+ * Computes the 3D Euclidean distance between two POINT Z geometries.
+ * Non-POINT or non-Z inputs cause a fallback to CPU execution.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_3ddistance(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS2(float8, geometry, geom_a, geometry, geom_b);
+
+	if (XPU_DATUM_ISNULL(&geom_a) || XPU_DATUM_ISNULL(&geom_b))
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+	if (!xpu_geometry_is_valid(kcxt, &geom_a) ||
+		!xpu_geometry_is_valid(kcxt, &geom_b))
+		return false;
+
+	/* Only support POINT Z on GPU; fall back to CPU for other types */
+	if (geom_a.type != GEOM_POINTTYPE || geom_b.type != GEOM_POINTTYPE ||
+		!(geom_a.flags & GEOM_FLAG__Z) || !(geom_b.flags & GEOM_FLAG__Z))
+	{
+		STROM_ELOG(kcxt, "ST_3DDistance: only POINT Z geometries supported on GPU");
+		return false;
+	}
+	if (geom_a.nitems == 0 || geom_b.nitems == 0)
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+
+	/* Read coordinates from both geometries (unaligned via memcpy) */
+	double	ax, ay, az, bx, by, bz;
+	memcpy(&ax, geom_a.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&ay, geom_a.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&az, geom_a.rawdata + 2 * sizeof(double), sizeof(double));
+	memcpy(&bx, geom_b.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&by, geom_b.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&bz, geom_b.rawdata + 2 * sizeof(double), sizeof(double));
+
+	double	dx = ax - bx;
+	double	dy = ay - by;
+	double	dz = az - bz;
+
+	result->value = sqrt(dx * dx + dy * dy + dz * dz);
+	result->expr_ops = &xpu_float8_ops;
+	return true;
+}
+
+/* ----------------------------------------------------------------
+ * ST_3DDWithin(geometry, geometry, float8) -> bool
+ *
+ * Tests whether two POINT Z geometries are within a given 3D distance.
+ * Uses squared-distance comparison to avoid sqrt.
+ * Non-POINT or non-Z inputs cause a fallback to CPU execution.
+ * ---------------------------------------------------------------- */
+PUBLIC_FUNCTION(bool)
+pgfn_st_3ddwithin(XPU_PGFUNCTION_ARGS)
+{
+	KEXP_PROCESS_ARGS3(bool, geometry, geom_a, geometry, geom_b,
+					   float8, threshold);
+
+	if (XPU_DATUM_ISNULL(&geom_a) ||
+		XPU_DATUM_ISNULL(&geom_b) ||
+		XPU_DATUM_ISNULL(&threshold))
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+	if (!xpu_geometry_is_valid(kcxt, &geom_a) ||
+		!xpu_geometry_is_valid(kcxt, &geom_b))
+		return false;
+
+	if (threshold.value < 0.0)
+	{
+		STROM_ELOG(kcxt, "ST_3DDWithin: tolerance cannot be less than zero");
+		return false;
+	}
+
+	/* Only support POINT Z on GPU; fall back to CPU for other types */
+	if (geom_a.type != GEOM_POINTTYPE || geom_b.type != GEOM_POINTTYPE ||
+		!(geom_a.flags & GEOM_FLAG__Z) || !(geom_b.flags & GEOM_FLAG__Z))
+	{
+		STROM_ELOG(kcxt, "ST_3DDWithin: only POINT Z geometries supported on GPU");
+		return false;
+	}
+	if (geom_a.nitems == 0 || geom_b.nitems == 0)
+	{
+		result->expr_ops = NULL;
+		return true;
+	}
+
+	/* Read coordinates from both geometries (unaligned via memcpy) */
+	double	ax, ay, az, bx, by, bz;
+	memcpy(&ax, geom_a.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&ay, geom_a.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&az, geom_a.rawdata + 2 * sizeof(double), sizeof(double));
+	memcpy(&bx, geom_b.rawdata + 0 * sizeof(double), sizeof(double));
+	memcpy(&by, geom_b.rawdata + 1 * sizeof(double), sizeof(double));
+	memcpy(&bz, geom_b.rawdata + 2 * sizeof(double), sizeof(double));
+
+	double	dx = ax - bx;
+	double	dy = ay - by;
+	double	dz = az - bz;
+	double	dist_sq = dx * dx + dy * dy + dz * dz;
+
+	result->value = (dist_sq <= threshold.value * threshold.value);
+	result->expr_ops = &xpu_bool_ops;
+	return true;
+}

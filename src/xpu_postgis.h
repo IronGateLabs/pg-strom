@@ -198,4 +198,16 @@ typedef struct
 	double	x, y, z, m;
 } POINT4D;
 
+/*
+ * ECI (Earth-Centered Inertial) SRID constants
+ *
+ * These SRIDs identify ECI reference frames for satellite/space applications.
+ * They are synthetic SRIDs (above SRID_USER_MAXIMUM) used internally by
+ * the postgis_ecef_eci extension.
+ */
+#define ECI_SRID_ICRF    900001
+#define ECI_SRID_J2000   900002
+#define ECI_SRID_TEME    900003
+#define ECEF_SRID        4978
+
 #endif /* XPU_POSTGIS_H */
