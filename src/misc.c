@@ -2362,7 +2362,7 @@ __shmemCreate(const DpuStorageEntry *ds_entry)
 {
 	static uint	my_random_seed = 0;
 	const char *shmem_dir = "/dev/shm";
-	int			fdesc;
+	int			fdesc = -1;
 	uint32_t	handle;
 	char		namebuf[MAXPGPATH];
 	size_t		off = 0;

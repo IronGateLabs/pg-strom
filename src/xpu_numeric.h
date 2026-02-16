@@ -297,7 +297,7 @@ __decimal_to_varlena(char *buffer, uint8_t kind, int16_t weight, int128_t value)
 
 			if (kind == XPU_NUMERIC_KIND__POS_INF)
 				nc->n_header = NUMERIC_PINF;
-			else if (kind == XPU_NUMERIC_KIND__POS_INF)
+			else if (kind == XPU_NUMERIC_KIND__NEG_INF)
 				nc->n_header = NUMERIC_NINF;
 			else
 				nc->n_header = NUMERIC_NAN;

@@ -1170,7 +1170,7 @@ __createGpuCacheSharedState(Relation rel,
 		if (!gc_lmap)
 			elog(ERROR, "out of memory: %m");
 
-		memcpy(&gc_lmap->ident, &gc_sstate->ident, sizeof(GpuCacheOptions));
+		memcpy(&gc_lmap->ident, &gc_sstate->ident, sizeof(GpuCacheIdent));
 		gc_lmap->refcnt       = 3;
 		gc_lmap->gc_sstate    = gc_sstate;
 		gc_lmap->mmap_sz      = mmap_sz;

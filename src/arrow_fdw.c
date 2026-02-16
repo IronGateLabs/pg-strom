@@ -240,6 +240,10 @@ typedef struct
 	struct timeval tm_last_reclaimed;
 } arrowMetadataCacheHead;
 
+/* Forward declarations */
+static void ArrowGetForeignRelSize(PlannerInfo *root,
+								   RelOptInfo *baserel,
+								   Oid foreigntableid);
 /*
  * Static variables
  */
@@ -3191,9 +3195,7 @@ baseRelIsArrowFdw(RelOptInfo *baserel)
 		baserel->rtekind == RTE_RELATION &&
 		OidIsValid(baserel->serverid) &&
 		baserel->fdwroutine &&
-		memcmp(baserel->fdwroutine,
-			   &pgstrom_arrow_fdw_routine,
-			   sizeof(FdwRoutine)) == 0)
+		baserel->fdwroutine->GetForeignRelSize == ArrowGetForeignRelSize)
 		return true;
 
 	return false;
@@ -3209,7 +3211,7 @@ RelationIsArrowFdw(Relation frel)
 	{
 		FdwRoutine *routine = GetFdwRoutineForRelation(frel, false);
 
-		if (memcmp(routine, &pgstrom_arrow_fdw_routine, sizeof(FdwRoutine)) == 0)
+		if (routine->GetForeignRelSize == ArrowGetForeignRelSize)
 			return true;
 	}
 	return false;
