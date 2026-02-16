@@ -3,4 +3,5 @@ Makefile.custom
 *.o
 *.fatbin
 *.gfatbin
+.local/
 

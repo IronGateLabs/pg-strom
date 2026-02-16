@@ -1,0 +1,29 @@
+schema: spec-driven
+
+context: |
+  Project: PG-Strom - PostgreSQL extension for GPU-accelerated analytics
+  Tech stack: C, C++17, CUDA, PostgreSQL extension API
+  Build: make with pg_config, nvcc (CUDA toolkit), libarrow/libparquet
+  Repo: github.com/IronGateLabs/pg-strom (fork of heterodb/pg-strom)
+  Upstream: github.com/heterodb/pg-strom
+  CI: SonarCloud (org: irongatelabs, key: IronGateLabs_pg-strom)
+  Git workflow: git flow + worktrees, PRs to IronGateLabs fork
+  Key directories:
+    - src/ — main extension code (C, CUDA .cu, headers)
+    - src/dpu/ — DPU service code
+    - src/flatbuffers/ — vendored flatbuffers (exclude from analysis)
+    - arrow-tools/ — CLI utilities (pg2arrow, tsv2arrow, etc.)
+    - test/ — regression tests
+    - deadcode/ — deprecated v2.x/v3.x code (exclude from analysis)
+    - docs/ — pre-built HTML docs (exclude from analysis)
+    - man/ — MkDocs source documentation
+
+rules:
+  proposal:
+    - Include a "Non-goals" section
+    - Reference specific SonarCloud rule IDs where applicable
+    - Note which issues are in active code (src/) vs noise (deadcode/, docs/)
+  tasks:
+    - Break tasks into focused, independently-testable chunks
+    - Each task should target a specific file or small set of related files
+    - Include verification step (re-run sonar analysis or specific check)
