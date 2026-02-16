@@ -804,6 +804,16 @@ FUNC_OPCODE(contains_2d,     box2df/box2df,   DEVKIND__ANY, box2df_contains,    
 FUNC_OPCODE(is_contained_2d, box2df/geometry, DEVKIND__ANY, box2df_geometry_within,   40, "postgis")
 FUNC_OPCODE(is_contained_2d, geometry/box2df, DEVKIND__ANY, geometry_box2df_within,   40, "postgis")
 FUNC_OPCODE(is_contained_2d, box2df/box2df,   DEVKIND__ANY, box2df_within,            40, "postgis")
+/* ECEF/ECI frame conversion (postgis_ecef_eci extension) */
+FUNC_OPCODE(st_ecef_to_eci, geometry/timestamptz/text, DEVKIND__ANY, st_ecef_to_eci, 20, "postgis_ecef_eci")
+FUNC_OPCODE(st_eci_to_ecef, geometry/timestamptz/text, DEVKIND__ANY, st_eci_to_ecef, 20, "postgis_ecef_eci")
+/* ECEF coordinate accessors (postgis_ecef_eci extension) */
+FUNC_OPCODE(st_ecef_x,      geometry,                  DEVKIND__ANY, st_ecef_x,       5, "postgis_ecef_eci")
+FUNC_OPCODE(st_ecef_y,      geometry,                  DEVKIND__ANY, st_ecef_y,       5, "postgis_ecef_eci")
+FUNC_OPCODE(st_ecef_z,      geometry,                  DEVKIND__ANY, st_ecef_z,       5, "postgis_ecef_eci")
+/* 3D spatial operations (postgis extension) */
+__FUNC_OPCODE(st_3ddistance, geometry/geometry,         20, "postgis")
+__FUNC_OPCODE(st_3ddwithin,  geometry/geometry/float8,  20, "postgis")
 
 /* cube/earthdistance */
 __FUNC_OPCODE(cube_eq,        cube/cube,  5, "cube")
