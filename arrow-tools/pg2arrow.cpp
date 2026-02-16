@@ -2276,12 +2276,13 @@ build_pgsql_command_list(void)
 	else if (ctid_target_table)
 	{
 		/* replace $(CTID_RANGE) by the special condition */
-		char	   *buf = (char *)alloca(2 * strlen(ctid_target_table) + 1000);
+		size_t		bufsz = 2 * strlen(ctid_target_table) + 1000;
+		char	   *buf = (char *)alloca(bufsz);
 		char	   *relkind;
 		int64_t		unitsz;
 		PGresult   *res;
 
-		sprintf(buf,
+		snprintf(buf, bufsz,
 				"SELECT c.relname, c.relkind,\n"
 				"       GREATEST(pg_relation_size(c.oid), %lu)\n"
 				"       / current_setting('block_size')::bigint"
@@ -2308,19 +2309,19 @@ build_pgsql_command_list(void)
 			std::string	query = sql_command;
 
 			if (__worker == 0)
-				sprintf(buf, "%s.ctid < '(%ld,0)'::tid",
-						ctid_target_table,
-						unitsz * (__worker+1));
+				snprintf(buf, bufsz, "%s.ctid < '(%ld,0)'::tid",
+						 ctid_target_table,
+						 unitsz * (__worker+1));
 			else if (__worker < num_worker_threads - 1)
-				sprintf(buf, "%s.ctid >= '(%ld,0)' AND %s.ctid < '(%ld,0)'::tid",
-						ctid_target_table,
-						unitsz * __worker,
-						ctid_target_table,
-						unitsz * (__worker+1));
+				snprintf(buf, bufsz, "%s.ctid >= '(%ld,0)' AND %s.ctid < '(%ld,0)'::tid",
+						 ctid_target_table,
+						 unitsz * __worker,
+						 ctid_target_table,
+						 unitsz * (__worker+1));
 			else
-				sprintf(buf, "%s.ctid >= '(%ld,0)'",
-						ctid_target_table,
-						unitsz * __worker);
+				snprintf(buf, bufsz, "%s.ctid >= '(%ld,0)'",
+						 ctid_target_table,
+						 unitsz * __worker);
 			__replace_string(query,
 							 std::string("$(CTID_RANGE)"),
 							 std::string(buf));
