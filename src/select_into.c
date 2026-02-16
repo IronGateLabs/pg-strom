@@ -278,6 +278,8 @@ __select_into_form__favg_numeric(gpuClient *gclient,
 			avg_kind = XPU_NUMERIC_KIND__NEG_INF;
 		else
 			avg_kind = XPU_NUMERIC_KIND__NAN;
+		avg_weight = 0;
+		avg_value = 0;
 	}
 	else
 	{

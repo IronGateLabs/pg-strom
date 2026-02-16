@@ -46,7 +46,7 @@ pgstrom_is_gpuscan_plan(const Plan *plan)
 {
 	if (IsA(plan, CustomScan))
 	{
-		const CustomScan *cscan = (const CustomScan *)cscan;
+		const CustomScan *cscan = (const CustomScan *)plan;
 
 		if (cscan->methods == &gpuscan_plan_methods)
 			return true;

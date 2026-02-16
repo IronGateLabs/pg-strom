@@ -81,7 +81,7 @@ __getOptimalDpuForFile(const char *pathname, StringInfo dpu_path)
 		}
 
 		if (S_ISLNK(stat_buf.st_mode) &&
-			(nbytes = readlink(pathname, namebuf, MAXPGPATH)) > 0)
+			(nbytes = readlink(pathname, namebuf, MAXPGPATH - 1)) > 0)
 		{
 			namebuf[nbytes] = '\0';
 			ds_entry = __getOptimalDpuForFile(namebuf, dpu_path);

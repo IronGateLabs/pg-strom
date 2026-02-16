@@ -1187,7 +1187,7 @@ writeFlatBufferFooter(SQLtable *table, ArrowFooter *footer)
     offset += payload->length;
 	tail = (FBFooterTailImage *)(image->data + nbytes);
 	tail->metaOffset = nbytes + sizeof(int32_t);
-	strcpy(tail->signature, "ARROW1");
+	memcpy(tail->signature, "ARROW1", 6);
 
 	arrowFileWrite(table, buffer, sizeof(uint64_t) + length);
 }

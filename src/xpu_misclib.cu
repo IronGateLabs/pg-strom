@@ -1331,10 +1331,10 @@ inet_cmp_internal(const xpu_inet_t *datum_a,
 		order = bitncmp(datum_a->value.ipaddr,
 						datum_b->value.ipaddr,
 						Min(datum_a->value.bits,
-							datum_a->value.bits));
+							datum_b->value.bits));
 		if (order != 0)
 			return order;
-		order = (int)datum_a->value.bits - (int)datum_a->value.bits;
+		order = (int)datum_a->value.bits - (int)datum_b->value.bits;
 		if (order != 0)
 			return order;
 		return bitncmp(datum_a->value.ipaddr,
